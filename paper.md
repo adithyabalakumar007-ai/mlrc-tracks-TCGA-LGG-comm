@@ -8,7 +8,7 @@
 
 ## Abstract
 
-Brain tumors disproportionately burden populations in low- and middle-income countries, yet the most capable AI diagnostic models are designed for well-resourced hospital infrastructure. In this reproducibility study, we reproduce the nnU-Net 2D full-resolution baseline on the TCGA-LGG MRI Segmentation Dataset — 110 lower-grade glioma (LGG) patients across 5 institutions from The Cancer Genome Atlas, totalling 3,929 FLAIR slices. Across 3-fold cross-validation we achieve a mean Dice of **0.840 ± 0.011** on tumor-bearing slices (**0.796 ± 0.021** over all validation slices), landing **within** the 0.82–0.92 range reported in prior literature and confirming a successful reproduction. We then conduct an equity analysis that is the core contribution of this work: while the model is **demographically equitable** (Dice varies by <0.02 across gender, age, and histologic grade), it exhibits large and consistent disparities by **tumor size** (a 0.37 Dice gap between the smallest and largest tumors), **institution** (a 0.09 gap, with the under-represented TCGA_CS center worst at 0.777), and **genomic subtype** (a 0.077 gap, RNASeq cluster 3 worst at 0.782). We additionally characterize image-quality degradation under simulated 1.5T scanner conditions (noise, blur, downsampling, missing slices). Three further extensions — lightweight U-Net variants, post-training quantization, and knowledge distillation — are scaffolded and described but require additional GPU compute and are reported as pending. All code, metrics, and figures are released openly.
+Brain tumors disproportionately burden populations in low- and middle-income countries, yet the most capable AI diagnostic models are designed for well-resourced hospital infrastructure. In this reproducibility study, we reproduce the nnU-Net 2D full-resolution baseline on the TCGA-LGG MRI Segmentation Dataset — 110 lower-grade glioma (LGG) patients across 5 institutions from The Cancer Genome Atlas, totalling 3,929 FLAIR slices. Across 3-fold cross-validation we achieve a mean Dice of **0.840 ± 0.011** on tumor-bearing slices (**0.796 ± 0.021** over all validation slices), landing **within** the 0.82–0.92 range reported in prior literature and confirming a successful reproduction. We then conduct an equity analysis that is the core contribution of this work: while the model is **demographically equitable** (Dice varies by <0.02 across gender, age, and histologic grade), it exhibits large and consistent disparities by **tumor size** (a 0.37 Dice gap between the smallest and largest tumors), **institution** (a 0.09 gap, with the under-represented TCGA_CS center worst at 0.777), and **genomic subtype** (a 0.077 gap, RNASeq cluster 3 worst at 0.782). We additionally characterize image-quality degradation under simulated 1.5T scanner conditions (noise, blur, downsampling, missing slices). Finally, we show that a **Micro U-Net (1.94M parameters, 7.5 MB)** matches the Full U-Net's validation Dice (0.864 vs 0.868) at **16× fewer parameters and 8.5× faster CPU inference (67 ms/slice)**, and that **FP16 quantization halves model size with no accuracy loss** — making CPU-only, smartphone-scale deployment feasible — while crucially *not* worsening performance on the hardest small-tumor cases. All code, metrics, and figures are released openly.
 
 **Keywords:** Brain tumor segmentation, nnU-Net, TCGA-LGG, fairness, equity, low-resource healthcare, Africa
 
@@ -36,7 +36,7 @@ The Kaggle TCGA-LGG dataset (Buda et al., 2019) provides 3,929 FLAIR MRI slices 
 2. **Equity analysis (primary contribution)** — We measure segmentation performance across institution, tumor size, genomic subtype, histologic grade, gender, and age, separating *demographic* equity from *clinical/structural* disparity.
 3. **Robustness characterization** — Image-quality degradation (SSIM/PSNR) under 11 simulated low-field scanner conditions.
 4. **Responsible-AI discussion** — Ethical implications of deploying AI segmentation without radiologist oversight.
-5. **Scaffolded lightweight extensions** — Lightweight U-Net, quantization, and distillation pipelines are implemented and described; their empirical results are pending additional GPU compute.
+5. **Lightweight deployment study** — Slim/Micro U-Net variants, FP16/INT8 quantization, knowledge distillation, and an equity-of-compression analysis, showing a 1.94M-parameter Micro model matches the Full model's Dice at 16× the efficiency without harming hard cases.
 
 ---
 
@@ -105,9 +105,9 @@ We pool per-case validation Dice from folds 0–2 (covering 2,093 of 3,495 train
 
 We simulate 11 degradation conditions on FLAIR slices (`robustness_test.py`): clean; Gaussian noise (σ=25, 50); blur (σ=1.5, 3.0); downsample 0.5×/0.25×; Rician noise (σ=20); missing/zeroed slice; brightness shift (+50); contrast reduction (50%). For each we report SSIM and PSNR versus the clean image. **Note:** segmentation Dice under degradation currently uses an Otsu-threshold *proxy* segmenter, not nnU-Net inference, so only the SSIM/PSNR image-quality results are reported as final; real degraded-input inference is listed as future work (§6).
 
-### 3.6 Lightweight, Quantization, and Distillation Extensions (scaffolded)
+### 3.6 Lightweight, Quantization, and Distillation Extensions
 
-Pipelines for (a) Slim/Micro U-Net variants, (b) FP16/INT8 post-training quantization, and (c) knowledge distillation are implemented in `extensions/`. Empirical results require additional GPU training beyond the 3-fold baseline and are **pending** (§4.5).
+We implement three plain U-Net variants (`extensions/lightweight_unet.py`) with progressively halved channel widths — Full [64,128,256,512], Slim [32,64,128,256], Micro [16,32,64,128] — trained with Adam (lr=1e-4), cosine-annealed, combined Dice+BCE loss, 20 epochs, on a slice-level 85/15 split (seed=42). **Note:** unlike the patient-level nnU-Net split, this slice-level split and the shorter schedule make the lightweight Dice numbers an internal comparison across variants rather than a like-for-like comparison with the nnU-Net baseline. Knowledge distillation (`extensions/distill.py`) trains Micro as a student of the Full teacher (soft-target BCE at temperature 2.0, α=0.5). Post-training quantization (`extensions/quantize_model.py`) applies FP16 casting and INT8 dynamic quantization. Compression equity (`extensions/compression_equity.py`) re-evaluates every checkpoint stratified by tumor size.
 
 ---
 
@@ -174,11 +174,79 @@ Per-patient Dice by subgroup (`subgroup_metrics.json`):
 
 **Summary of disparities (largest to smallest):** tumor size (0.370) ≫ institution (0.091) > genomic subtype (0.077) ≫ grade (0.020) ≈ gender (0.018) ≈ age (0.017).
 
-### 4.5 Lightweight / Quantization / Distillation — Pending
+### 4.5 Lightweight U-Net Variants
 
-These extensions are implemented in `extensions/` but their results require GPU training beyond the 3-fold baseline and are **not yet available**. They are deferred to a subsequent compute allocation; the reproduction and equity analyses above stand independently.
+Three plain U-Net variants trained 20 epochs on the slice-level split
+(`unet_*_metrics.json`, `architecture_benchmark.json`). "Val Dice (all)" is the
+mean over all validation slices (tumour + empty); "Tumor Dice" is the mean over
+tumour-bearing slices only (`compression_equity.json`), the metric comparable to
+the nnU-Net baseline:
 
-### 4.6 Robustness: Image-Quality Degradation
+| Model | Params | Size (MB) | Val Dice (all) | Tumor Dice | CPU ms/slice | GPU ms/slice |
+|---|---|---|---|---|---|---|
+| Full  | 31.0M | 118.5 | 0.868 | 0.766 | 571 | 20.8 |
+| Slim  | 7.76M | 29.7  | 0.866 | 0.752 | 166 | 7.6 |
+| Micro | 1.94M | 7.5   | 0.864 | 0.787 | 67  | 4.0 |
+
+**Micro U-Net matches Full's validation Dice (0.864 vs 0.868) with 16× fewer
+parameters, a 15.9× smaller footprint, and 8.5× faster CPU inference (67 ms vs
+571 ms/slice).** On tumour slices Micro is actually the strongest of the three
+(0.787) — at 20 epochs the larger models show no advantage on this 2D task.
+All three sit ~5–9 Dice points below the nnU-Net baseline (0.840 tumour-slice),
+as expected given the shorter schedule, lighter augmentation, and plain
+architecture; the gap would narrow with longer training.
+
+### 4.6 Quantization (Micro U-Net)
+
+Post-training quantization of the Micro model (`quantization_micro_results.json`).
+FP16 dice/latency are measured on GPU (FP16 conv is unsupported on CPU):
+
+| Precision | Val Dice (all) | Size (MB) | Latency (ms) |
+|---|---|---|---|
+| FP32 | 0.864 | 7.46 | 65.6 (CPU) |
+| FP16 | 0.866 | **3.75** | 3.0 (GPU) |
+| INT8 (dynamic) | 0.864 | 7.46 | 53.6 (CPU) |
+
+**FP16 halves model size (7.46 → 3.75 MB) with no accuracy loss** (Dice +0.002,
+within noise). INT8 *dynamic* quantization produces no size reduction — it only
+quantizes Linear/LSTM layers, and a U-Net is all-convolutional; genuine INT8 conv
+compression requires static (calibrated) quantization (future work). A 3.75 MB
+FP16 Micro U-Net is small enough to ship inside a mobile app. (Slim quantization
+ran but its outputs were overwritten by the Micro run in this batch; the script
+now writes variant-specific filenames for future runs.)
+
+### 4.7 Equity of Compression
+
+Does shrinking the model disproportionately hurt the hardest (small-tumour)
+cases? Tumour-slice Dice by size, per model (`compression_equity.json`):
+
+| Tumor size | Full | Slim | Micro | Micro (distill) |
+|---|---|---|---|---|
+| XS (<200) | 0.314 | 0.221 | **0.435** | 0.251 |
+| S (200–500) | 0.492 | 0.471 | 0.515 | 0.378 |
+| M (500–1k) | 0.662 | 0.633 | 0.726 | 0.562 |
+| L (1k–2k) | 0.822 | 0.815 | 0.835 | 0.731 |
+| XL (>2k) | 0.909 | 0.909 | 0.907 | 0.878 |
+
+**Compression does not disproportionately harm small tumours** — the Micro model
+is in fact the *best* of all variants on the smallest (XS) lesions (0.435 vs
+Full's 0.314). The dominant determinant of accuracy remains tumour size, not
+model size, across every variant. This is a reassuring result for low-resource
+deployment: the cheap, CPU-runnable model is no worse on hard cases than the
+heavy one.
+
+### 4.8 Knowledge Distillation
+
+Distilling the Full teacher into a Micro student (`distill_micro_metrics.json`)
+raised the all-slice validation Dice to **0.871** (vs 0.864 for Micro trained
+from scratch), but *lowered* tumour-slice Dice to 0.697 (vs 0.787). The
+distillation objective (α=0.5 soft targets) pulled the student toward the
+teacher's confident background predictions on the majority-empty slices,
+improving the aggregate metric while sacrificing tumour delineation. We report
+this as a negative/nuanced result: naive distillation is not beneficial here and
+would need a tumour-weighted objective to help.
+
+### 4.9 Robustness: Image-Quality Degradation
 
 SSIM/PSNR versus clean FLAIR across degradation conditions (`robustness_results.json`, 100 tumor slices):
 
@@ -218,7 +286,24 @@ The 0.091 gap between TCGA_HT (0.868) and TCGA_CS (0.777) tracks representation:
 
 A notable positive result: the model does **not** show meaningful bias by gender, age, or histologic grade (all <0.02 Dice). The disparities that exist are *clinical/structural* (tumor size, institution, genomic subtype) rather than demographic. The 0.077 genomic-subtype gap (RNASeq-3 worst) warrants follow-up — molecular subtype correlates with tumor morphology, and under-representation of a subtype in training may explain it.
 
-### 5.5 Ethical Implications of Deployment Without Radiologist Oversight
+### 5.5 Lightweight Models Make CPU-Only Deployment Viable
+
+The Micro U-Net is the clearest practical win of the study: at 1.94M parameters
+and 7.5 MB it runs in 67 ms/slice on CPU — fast enough for interactive use on a
+commodity laptop with no GPU — while matching the Full model's validation Dice.
+FP16 quantization shrinks it further to 3.75 MB, smartphone-app scale, with no
+accuracy loss. For a rural clinic where a GPU workstation is out of budget, this
+is the difference between "deployable" and "not". Two honest caveats temper the
+result: (1) all lightweight variants trail the nnU-Net baseline by ~5–9 tumour-
+slice Dice points at this training budget, so there is an accuracy cost to pay
+for portability; and (2) naive knowledge distillation did not help — it improved
+the aggregate metric while degrading tumour delineation (§4.8), a reminder that
+compression techniques must be validated on the clinically relevant metric, not
+just aggregate Dice. Crucially, the equity-of-compression analysis (§4.7) shows
+the cheap model is *no worse* on the hardest small-tumour cases than the heavy
+one, so portability does not come at the cost of fairness.
+
+### 5.6 Ethical Implications of Deployment Without Radiologist Oversight
 
 In high-income settings, AI segmentation is decision support: a radiologist reviews and overrides as needed. In rural settings with no radiologist, the model's prediction may become the de facto diagnosis, removing the human error-correction layer. Given our findings, responsible deployment requires:
 1. **Size-aware confidence** — the model should flag small-lesion cases where Dice is expectedly low.
@@ -226,24 +311,25 @@ In high-income settings, AI segmentation is decision support: a radiologist revi
 3. **Subgroup auditing** — periodic monitoring by institution and genomic subtype.
 4. **Regulatory clearance** — no model here is cleared for clinical diagnosis.
 
-### 5.6 Limitations
+### 5.7 Limitations
 
-1. **200-epoch budget**, not the canonical 1,000 (Kaggle GPU limit).
+1. **200-epoch budget** for nnU-Net (vs canonical 1,000) and **20 epochs** for the lightweight variants (Kaggle GPU limits); both likely understate achievable Dice.
 2. **3 of 5 CV folds** evaluated; the held-out 434-slice test set is not yet scored.
-3. **2D only / FLAIR only** — no 3D context, no T1/T1Gd.
-4. **No HD95 / boundary metrics** — nnU-Net default summary omits them.
-5. **Robustness Dice is a proxy** (Otsu), not nnU-Net inference; only SSIM/PSNR are final.
-6. **Lightweight/quantization/distillation results pending** GPU compute.
-7. **No African validation set** — TCGA-LGG is US/China-sourced; generalization to African scanners and demographics is untested.
-8. **Coded clinical labels** — `data.csv` ships no codebook for grade/gender/race.
+3. **Two Dice conventions** — the lightweight/quantization tables report all-slice validation Dice, while the baseline and equity analyses report tumour-slice Dice; we label each but they are not directly interchangeable, and the lightweight models use a slice-level (not patient-level) split.
+4. **2D only / FLAIR only** — no 3D context, no T1/T1Gd.
+5. **No HD95 / boundary metrics** — nnU-Net default summary omits them.
+6. **Robustness Dice is a proxy** (Otsu), not nnU-Net inference; only SSIM/PSNR are final.
+7. **INT8 dynamic quantization is ineffective** for conv U-Nets (no size reduction); static quantization is needed for a genuine INT8 result.
+8. **No African validation set** — TCGA-LGG is US/China-sourced; generalization to African scanners and demographics is untested.
+9. **Coded clinical labels** — `data.csv` ships no codebook for grade/gender/race.
 
 ---
 
 ## 6. Future Work
 
-1. **Complete the lightweight/quantization/distillation extensions** with GPU compute.
+1. **Static (calibrated) INT8 quantization** for genuine 4× conv compression, and **tumour-weighted distillation** to fix the §4.8 regression.
 2. **Real degraded-input inference** — replace the Otsu proxy with nnU-Net on degraded slices.
-3. **Full 1,000-epoch run** and all 5 folds; score the held-out test set; add HD95.
+3. **Full 1,000-epoch run** and all 5 folds; score the held-out test set; add HD95; longer lightweight schedules with patient-level splits for a like-for-like comparison.
 4. **Volumetric & multi-sequence** extension (3D nnU-Net, T1/T1Gd fusion).
 5. **African cohort validation** and **federated learning** for cross-institution equity.
 6. **Size-aware calibration** to communicate uncertainty on small lesions.
@@ -252,7 +338,7 @@ In high-income settings, AI segmentation is decision support: a radiologist revi
 
 ## 7. Conclusion
 
-We reproduced the nnU-Net 2D baseline on TCGA-LGG, achieving **0.840 ± 0.011** tumor-slice Dice across 3-fold cross-validation — within the 0.82–0.92 target range. Our equity analysis shows the model is demographically fair (gender/age/grade gaps <0.02) but exhibits large, consistent disparities by tumor size (0.370), institution (0.091), and genomic subtype (0.077). The tumor-size disparity is the headline finding: aggregate accuracy hides systematic failure on the small, early-stage lesions where segmentation matters most. We argue that equitable deployment in low-resource settings requires size-aware confidence, input quality control, and subgroup auditing — not just a high average Dice. All code, metrics, and figures are released openly to support replication.
+We reproduced the nnU-Net 2D baseline on TCGA-LGG, achieving **0.840 ± 0.011** tumor-slice Dice across 3-fold cross-validation — within the 0.82–0.92 target range. Our equity analysis shows the model is demographically fair (gender/age/grade gaps <0.02) but exhibits large, consistent disparities by tumor size (0.370), institution (0.091), and genomic subtype (0.077). The tumor-size disparity is the headline finding: aggregate accuracy hides systematic failure on the small, early-stage lesions where segmentation matters most. On the deployment side, a **Micro U-Net (1.94M params, 7.5 MB, 67 ms/slice CPU) matches the Full model's Dice at 16× the efficiency**, FP16 halves its size to 3.75 MB with no accuracy loss, and — importantly — this compression does *not* worsen the hardest small-tumour cases. We argue that equitable deployment in low-resource settings requires size-aware confidence, input quality control, and subgroup auditing — not just a high average Dice — and that cheap, CPU-runnable models can deliver this without sacrificing fairness. All code, metrics, and figures are released openly to support replication.
 
 ---
 

@@ -140,7 +140,7 @@ results = {
     'INT8':  {'dice': int8_dice, 'size_mb': int8_size, 'latency_ms': int8_lat},
     'ONNX':  {'size_mb': onnx_size},
 }
-with open('results/quantization_results.json', 'w') as f:
+with open(f'results/quantization_{args.variant}_results.json', 'w') as f:
     json.dump(results, f, indent=2)
 
 # ── Figure ────────────────────────────────────────────────────────────────────
@@ -171,7 +171,7 @@ axes[0].axhline(0.82, color='red', linestyle=':', lw=1, label='Target 0.82')
 axes[0].legend(fontsize=8)
 plt.suptitle(f'Quantization Results: {args.variant.capitalize()} U-Net', fontweight='bold')
 plt.tight_layout()
-plt.savefig('figures/quantization_comparison.png', dpi=150)
+plt.savefig(f'figures/quantization_{args.variant}_comparison.png', dpi=150)
 plt.close()
-print("Saved figures/quantization_comparison.png")
-print("Saved results/quantization_results.json")
+print(f"Saved figures/quantization_{args.variant}_comparison.png")
+print(f"Saved results/quantization_{args.variant}_results.json")
